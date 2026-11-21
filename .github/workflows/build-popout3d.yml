@@ -47,3 +47,5 @@ jobs:
           path: ffgl-sdk/binaries/x64/Release/PopOut3D.dll
           if-no-files-found: error
           retention-days: 30
+
+# Trigger v3 build after source and parameter updates.
