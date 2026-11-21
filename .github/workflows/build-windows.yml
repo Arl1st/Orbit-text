@@ -40,6 +40,9 @@ jobs:
           $project = $project.Replace("{6858F0CB-DE74-406F-B56A-CC5514CAA952}", "{B4B8C58D-7E14-4E32-9AC4-8E6A6CBF9A21}")
           Set-Content -Path "ffgl-sdk/build/windows/OrbitText.vcxproj" -Value $project -Encoding UTF8
 
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
       - name: Build native FFGL plugin
         shell: pwsh
         run: |
