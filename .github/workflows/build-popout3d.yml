@@ -1,0 +1,49 @@
+name: Build POP-OUT 3D FFGL (Windows x64)
+on:
+  push:
+    branches: [ popout-3d-effect ]
+    paths: [ 'popout3d/**', '.github/workflows/build-popout3d.yml' ]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout official Resolume FFGL SDK
+        uses: actions/checkout@v4
+        with:
+          repository: resolume/ffgl
+          path: ffgl-sdk
+      - name: Prepare plugin project
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "ffgl-sdk/source/plugins/PopOut3D" | Out-Null
+          Copy-Item "popout3d/FFGLPopOut3D.cpp" "ffgl-sdk/source/plugins/PopOut3D/FFGLPopOut3D.cpp"
+          Copy-Item "popout3d/FFGLPopOut3D.h" "ffgl-sdk/source/plugins/PopOut3D/FFGLPopOut3D.h"
+          Copy-Item "ffgl-sdk/build/windows/Gradient.vcxproj" "ffgl-sdk/build/windows/PopOut3D.vcxproj"
+          $p = Get-Content "ffgl-sdk/build/windows/PopOut3D.vcxproj" -Raw
+          $p = $p.Replace("FFGLGradients.cpp","FFGLPopOut3D.cpp")
+          $p = $p.Replace("FFGLGradients.h","FFGLPopOut3D.h")
+          $p = $p.Replace("source\plugins\Gradients","source\plugins\PopOut3D")
+          $p = $p.Replace("AVFFGLADDSUBTRACT_EXPORTS","POPOUT3D_EXPORTS")
+          $p = $p.Replace("{6858F0CB-DE74-406F-B56A-CC5514CAA952}","{A77D5F0A-7D40-45A2-9D41-0F4B2C6A7E19}")
+          Set-Content -Path "ffgl-sdk/build/windows/PopOut3D.vcxproj" -Value $p -Encoding UTF8
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+      - name: Build native FFGL plugin
+        shell: pwsh
+        run: msbuild "ffgl-sdk/build/windows/PopOut3D.vcxproj" /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /p:TargetName=PopOut3D /verbosity:minimal
+      - name: Verify DLL
+        shell: pwsh
+        run: |
+          $dll = "ffgl-sdk/binaries/x64/Release/PopOut3D.dll"
+          if (!(Test-Path $dll)) { Get-ChildItem "ffgl-sdk/binaries" -Recurse -ErrorAction SilentlyContinue; throw "Build did not produce PopOut3D.dll" }
+          Get-Item $dll | Format-List FullName,Length,LastWriteTime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: POP-OUT-3D-Windows-x64
+          path: ffgl-sdk/binaries/x64/Release/PopOut3D.dll
+          if-no-files-found: error
+          retention-days: 30
