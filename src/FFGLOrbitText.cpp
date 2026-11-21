@@ -14,9 +14,9 @@ using namespace ffglex;
 
 namespace {
 enum Param : unsigned int {
- T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,
- T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,
- T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3
+ T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,GI1,GR1,GE1,
+ T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,GI2,GR2,GE2,
+ T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3,GI3,GR3,GE3
 };
 struct Line {
  std::string text;
@@ -68,7 +68,7 @@ public:
  OrbitText():CFFGLPlugin(false) {
   SetMinInputs(0);SetMaxInputs(0);
   lines[0].text="ORBIT TEXT";lines[1].text="RESOLUME ARENA";lines[2].text="LIVE VISUALS";
-  const unsigned int base[3]={0,27,54}; const char* names[3]={"Line 1","Line 2","Line 3"};
+  const unsigned int base[3]={T1,T2,T3}; const char* names[3]={"Line 1","Line 2","Line 3"};
   for(int i=0;i<3;++i){
    unsigned int b=base[i];std::string n=names[i];
    SetParamInfo(b,n.append(" Text").c_str(),FF_TYPE_TEXT,lines[i].text.c_str()); n=names[i];
@@ -145,7 +145,7 @@ public:
  }
  float GetFloatParameter(unsigned int index) override {
   const unsigned int b[3]={T1,T2,T3};
-  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+14)continue;const Line& x=lines[i];
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+17)continue;const Line& x=lines[i];
    switch(index-b[i]){
     case 1:return x.enabled;case 2:return x.shape;case 3:return (x.width-.05f)/.85f;case 4:return (x.height-.05f)/.85f;
     case 5:return x.radius/.5f;case 6:return x.speed/.5f;case 7:return x.reverse;case 8:return x.offset;
