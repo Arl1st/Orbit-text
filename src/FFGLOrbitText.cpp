@@ -1,3 +1,6 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <FFGLSDK.h>
 #include <string>
@@ -33,7 +36,7 @@ std::wstring Wide(const std::string& s) {
  if(s.empty()) return L"";
  int n=MultiByteToWideChar(CP_UTF8,0,s.c_str(),(int)s.size(),nullptr,0);
  if(n<=0) return std::wstring(s.begin(),s.end());
- std::wstring out(n,L'\0'); MultiByteToWideChar(CP_UTF8,0,s.c_str(),(int)s.size(),out.data(),n); return out;
+ std::wstring out(n,L'\0'); MultiByteToWideChar(CP_UTF8,0,s.c_str(),(int)s.size(),&out[0],n); return out;
 }
 Point RectPoint(float d,float cx,float cy,float rx,float ry,float r) {
  r=std::max(0.0f,std::min(r,std::min(rx,ry)));
