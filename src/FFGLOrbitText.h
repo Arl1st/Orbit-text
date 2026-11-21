@@ -1,2 +1,3 @@
 #pragma once
-// Orbit Text implementation is currently contained in FFGLOrbitText.cpp.
+// The Orbit Text plugin implementation is compiled from FFGLOrbitText.cpp.
+// The class is intentionally kept in that translation unit.
