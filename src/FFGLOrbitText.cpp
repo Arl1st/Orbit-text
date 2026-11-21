@@ -59,7 +59,7 @@ public:
  OrbitText():CFFGLPlugin(false) {
   SetMinInputs(0);SetMaxInputs(0);
   lines[0].text="ORBIT TEXT";lines[1].text="RESOLUME ARENA";lines[2].text="LIVE VISUALS";
-  const unsigned int base[3]={T1,T2,T3}; const char* names[3]={"Line 1","Line 2","Line 3"};
+  const unsigned int base[3]={0,27,54}; const char* names[3]={"Line 1","Line 2","Line 3"};
   for(int i=0;i<3;++i){
    unsigned int b=base[i];std::string n=names[i];
    SetParamInfo(b,n.append(" Text").c_str(),FF_TYPE_TEXT,lines[i].text.c_str()); n=names[i];
