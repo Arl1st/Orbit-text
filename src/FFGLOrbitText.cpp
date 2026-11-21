@@ -1,3 +1,4 @@
+#include <windows.h>
 #include <FFGLSDK.h>
 #include <string>
 #include <vector>
