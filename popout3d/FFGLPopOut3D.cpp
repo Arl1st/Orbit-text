@@ -10,20 +10,35 @@ uniform sampler2D InputTexture; uniform float Depth; uniform float PopOut; unifo
 in vec2 uv; out vec4 fragColor;
 float lum(vec3 c){ return dot(c,vec3(0.2126,0.7152,0.0722)); }
 void main(){
- vec4 base=texture(InputTexture,uv); if(base.a<=0.0001){fragColor=base;return;}
- vec3 src=base.rgb/base.a; float z=clamp((lum(src)-Focus)*1.8,-1.0,1.0);
- float parallax=(Depth*0.018+PopOut*0.026)*z; vec2 shift=vec2(parallax*Direction,0.0);
- vec2 uvL=clamp(uv+shift,vec2(0.001),vec2(0.999)); vec2 uvR=clamp(uv-shift,vec2(0.001),vec2(0.999));
- vec4 l=texture(InputTexture,uvL); vec4 r=texture(InputTexture,uvR);
- vec3 left=l.rgb/max(l.a,0.0001); vec3 right=r.rgb/max(r.a,0.0001);
- vec3 stereo=vec3(left.r,mix(src.g,right.g,CyanMix),mix(src.b,right.b,CyanMix));
+ vec4 base=texture(InputTexture,uv);
+ if(base.a<=0.0001){ fragColor=base; return; }
+ vec3 src=base.rgb/base.a;
+
+ // Single-image pseudo depth: bright areas move toward the viewer,
+ // darker areas recede. The focus control sets the neutral depth plane.
+ float centered=clamp((lum(src)-Focus)*2.0,-1.0,1.0);
+ float z=sign(centered)*pow(abs(centered),0.82);
+ float foreground=max(z,0.0);
+ float parallax=(Depth*0.020*z + PopOut*0.035*foreground)*Direction;
+
+ // Red is the left-eye view; green/blue form the cyan right-eye view.
+ vec2 shift=vec2(parallax,0.0);
+ vec2 uvL=clamp(uv+shift,vec2(0.001),vec2(0.999));
+ vec2 uvR=clamp(uv-shift,vec2(0.001),vec2(0.999));
+ vec4 l=texture(InputTexture,uvL);
+ vec4 r=texture(InputTexture,uvR);
+ vec3 left=l.rgb/max(l.a,0.0001);
+ vec3 right=r.rgb/max(r.a,0.0001);
+ vec3 anaglyph=vec3(left.r,mix(src.g,right.g,CyanMix),mix(src.b,right.b,CyanMix));
+
+ // Fine edge accent; kept deliberately subtle so it does not replace depth.
  vec2 px=1.0/vec2(textureSize(InputTexture,0));
  float edge=abs(lum(texture(InputTexture,uv+vec2(px.x,0)).rgb)-lum(texture(InputTexture,uv-vec2(px.x,0)).rgb))
            +abs(lum(texture(InputTexture,uv+vec2(0,px.y)).rgb)-lum(texture(InputTexture,uv-vec2(0,px.y)).rgb));
- vec3 outColor=mix(src,stereo,Blend)+vec3(1.0,0.18,0.08)*edge*Glow*1.8;
+ vec3 outColor=mix(src,anaglyph,Blend)+vec3(1.0,0.18,0.08)*edge*Glow*1.25;
  fragColor=vec4(clamp(outColor,0.0,1.0)*base.a,base.a);
 })";
-PopOut3D::PopOut3D():depth(0.65f),popOut(0.7f),focus(0.5f),cyanMix(1.0f),glow(0.15f),direction(1.0f),blend(1.0f){
+PopOut3D::PopOut3D():depth(0.65f),popOut(0.7f),focus(0.5f),cyanMix(1.0f),glow(0.12f),direction(1.0f),blend(1.0f){
  SetMinInputs(1);SetMaxInputs(1);
  SetParamInfof(P_DEPTH,"3D Depth",FF_TYPE_STANDARD);SetParamInfof(P_POPOUT,"Pop Out",FF_TYPE_STANDARD);
  SetParamInfof(P_FOCUS,"Depth Focus",FF_TYPE_STANDARD);SetParamInfof(P_CYAN,"Cyan Channel",FF_TYPE_STANDARD);
