@@ -1,0 +1,64 @@
+name: Build Orbit Text FFGL (Windows x64)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - '.github/workflows/build-windows.yml'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout Orbit Text
+        uses: actions/checkout@v4
+
+      - name: Checkout official Resolume FFGL SDK
+        uses: actions/checkout@v4
+        with:
+          repository: resolume/ffgl
+          path: ffgl-sdk
+
+      - name: Install plugin source into SDK build tree
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "ffgl-sdk/source/plugins/OrbitText" | Out-Null
+          Copy-Item "src/FFGLOrbitText.cpp" "ffgl-sdk/source/plugins/OrbitText/FFGLOrbitText.cpp"
+          Copy-Item "ffgl-sdk/build/windows/Gradient.vcxproj" "ffgl-sdk/build/windows/OrbitText.vcxproj"
+          $project = Get-Content "ffgl-sdk/build/windows/OrbitText.vcxproj" -Raw
+          $project = $project.Replace("FFGLGradients.cpp", "FFGLOrbitText.cpp")
+          $project = $project.Replace("FFGLGradients.h", "FFGLOrbitText.h")
+          $project = $project.Replace("source\plugins\Gradients", "source\plugins\OrbitText")
+          $project = $project.Replace("AVFFGLADDSUBTRACT_EXPORTS", "ORBITTEXT_EXPORTS")
+          $project = $project.Replace("OpenGL32.lib;", "OpenGL32.lib;Gdi32.lib;")
+          $project = $project.Replace("{6858F0CB-DE74-406F-B56A-CC5514CAA952}", "{B4B8C58D-7E14-4E32-9AC4-8E6A6CBF9A21}")
+          Set-Content -Path "ffgl-sdk/build/windows/OrbitText.vcxproj" -Value $project -Encoding UTF8
+
+      - name: Build native FFGL plugin
+        shell: pwsh
+        run: |
+          msbuild "ffgl-sdk/build/windows/OrbitText.vcxproj" /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /p:TargetName=OrbitText /verbosity:minimal
+
+      - name: Verify DLL
+        shell: pwsh
+        run: |
+          $dll = "ffgl-sdk/binaries/x64/Release/OrbitText.dll"
+          if (!(Test-Path $dll)) {
+            Get-ChildItem "ffgl-sdk/binaries" -Recurse -ErrorAction SilentlyContinue
+            throw "Build did not produce OrbitText.dll"
+          }
+          Get-Item $dll | Format-List FullName,Length,LastWriteTime
+
+      - name: Upload Orbit Text DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrbitText-Windows-x64
+          path: ffgl-sdk/binaries/x64/Release/OrbitText.dll
+          if-no-files-found: error
+          retention-days: 30
