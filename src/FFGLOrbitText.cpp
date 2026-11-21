@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 
 using namespace ffglex;
 
@@ -35,11 +36,11 @@ in vec2 uv;
 out vec4 fragColor;
 void main()
 {
-    float a = texture(textTexture, uv).a;
+    float a = texture(textTexture, vec2(uv.x, 1.0 - uv.y)).a;
     float g = 0.0;
     for (int x = -2; x <= 2; ++x)
         for (int y = -2; y <= 2; ++y)
-            g = max(g, texture(textTexture, uv + vec2(x,y) * texelSize * 2.0).a);
+            g = max(g, texture(textTexture, vec2(uv.x, 1.0 - uv.y) + vec2(x,-y) * texelSize * 2.0).a);
     float alpha = max(a, g * glowAmount);
     fragColor = vec4(textColor, alpha);
 }
@@ -47,12 +48,27 @@ void main()
 
 std::wstring Utf8ToWide(const std::string& s)
 {
-    if (s.empty()) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    if (n <= 1) return std::wstring(s.begin(), s.end());
-    std::wstring out(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &out[0], n);
-    out.resize(static_cast<size_t>(n - 1));
+    std::wstring out;
+    for (size_t i = 0; i < s.size();) {
+        unsigned char c = (unsigned char)s[i++];
+        unsigned int cp = c;
+        if ((c & 0xE0) == 0xC0 && i < s.size()) {
+            cp = ((c & 0x1F) << 6) | ((unsigned char)s[i++] & 0x3F);
+        } else if ((c & 0xF0) == 0xE0 && i + 1 < s.size()) {
+            cp = ((c & 0x0F) << 12) | (((unsigned char)s[i++] & 0x3F) << 6);
+            cp |= ((unsigned char)s[i++] & 0x3F);
+        } else if ((c & 0xF8) == 0xF0 && i + 2 < s.size()) {
+            cp = ((c & 0x07) << 18) | (((unsigned char)s[i++] & 0x3F) << 12);
+            cp |= (((unsigned char)s[i++] & 0x3F) << 6) | ((unsigned char)s[i++] & 0x3F);
+        }
+        if (sizeof(wchar_t) == 2 && cp > 0xFFFF) {
+            cp -= 0x10000;
+            out.push_back((wchar_t)(0xD800 + (cp >> 10)));
+            out.push_back((wchar_t)(0xDC00 + (cp & 0x3FF)));
+        } else {
+            out.push_back((wchar_t)cp);
+        }
+    }
     return out;
 }
 
@@ -321,10 +337,8 @@ private:
     void RenderText()
     {
         std::memset(pixels, 0, (size_t)width * (size_t)height * 4);
-        LARGE_INTEGER qpc{}, freq{};
-        QueryPerformanceCounter(&qpc);
-        QueryPerformanceFrequency(&freq);
-        float now = (float)((double)qpc.QuadPart / (double)freq.QuadPart);
+        static const auto epoch = std::chrono::steady_clock::now();
+        float now = std::chrono::duration<float>(std::chrono::steady_clock::now() - epoch).count();
         for (int line = 0; line < 3; ++line) DrawLine(line, now);
         // GDI leaves the alpha byte undefined. Convert the white glyph coverage to alpha.
         for (size_t i = 0, n = (size_t)width * (size_t)height; i < n; ++i) {
