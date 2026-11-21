@@ -30,6 +30,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "ffgl-sdk/source/plugins/OrbitText" | Out-Null
           Copy-Item "src/FFGLOrbitText.cpp" "ffgl-sdk/source/plugins/OrbitText/FFGLOrbitText.cpp"
+          Copy-Item "src/FFGLOrbitText.h" "ffgl-sdk/source/plugins/OrbitText/FFGLOrbitText.h"
           Copy-Item "ffgl-sdk/build/windows/Gradient.vcxproj" "ffgl-sdk/build/windows/OrbitText.vcxproj"
           $project = Get-Content "ffgl-sdk/build/windows/OrbitText.vcxproj" -Raw
           $project = $project.Replace("FFGLGradients.cpp", "FFGLOrbitText.cpp")
