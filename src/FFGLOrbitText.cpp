@@ -14,15 +14,15 @@ using namespace ffglex;
 
 namespace {
 enum Param : unsigned int {
- T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,GI1,GR1,GE1,
- T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,GI2,GR2,GE2,
- T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3,GI3,GR3,GE3
+ T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,GI1,GR1,GE1,GCR1,GCG1,GCB1,
+ T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,GI2,GR2,GE2,GCR2,GCG2,GCB2,
+ T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3,GI3,GR3,GE3,GCR3,GCG3,GCB3
 };
 struct Line {
  std::string text;
  float enabled=1, shape=1, width=.46f, height=.25f, radius=.12f;
  float speed=.18f, reverse=0, offset=0, pause=0, font=.34f, spacing=.5f;
- float r=1,g=1,b=1; float glow=0.65f, glowRadius=0.012f; bool glowEnabled=true;
+ float r=1,g=1,b=1; float glow=0.65f, glowRadius=0.012f; float glowR=.25f,glowG=.65f,glowB=1.0f; bool glowEnabled=true;
 };
 struct Canvas { HDC dc=nullptr; HBITMAP bmp=nullptr,old=nullptr; unsigned char* px=nullptr; GLuint tex=0; };
 struct Point { float x,y,tx,ty; };
@@ -30,7 +30,7 @@ const char* vs=R"(#version 410 core
 layout(location=0) in vec4 vPosition; layout(location=1) in vec2 vUV;
 out vec2 uv; void main(){gl_Position=vPosition;uv=vUV;})";
 const char* fs=R"(#version 410 core
-uniform sampler2D Mask; uniform vec3 Color; uniform vec2 TexelSize; uniform float GlowAmount; uniform float GlowRadius; in vec2 uv; out vec4 fragColor;
+uniform sampler2D Mask; uniform vec3 Color; uniform vec3 GlowColor; uniform vec2 TexelSize; uniform float GlowAmount; uniform float GlowRadius; in vec2 uv; out vec4 fragColor;
 void main(){
  vec2 p=vec2(uv.x,1.0-uv.y); float a=texture(Mask,p).a;
  vec2 d=TexelSize*GlowRadius; float blur=0.0;
@@ -39,7 +39,8 @@ void main(){
  blur+=texture(Mask,p+vec2(d.x,d.y)).a; blur+=texture(Mask,p+vec2(d.x,-d.y)).a;
  blur+=texture(Mask,p+vec2(-d.x,d.y)).a; blur+=texture(Mask,p-vec2(d.x,d.y)).a;
  float glow=clamp((blur/8.0)*GlowAmount,0.0,1.0);
- fragColor=vec4(Color,max(a,glow));
+ vec3 rgb=mix(GlowColor,Color,a);
+ fragColor=vec4(rgb,max(a,glow));
 })";
 std::wstring Wide(const std::string& s) {
  if(s.empty()) return L"";
@@ -90,12 +91,15 @@ public:
    SetParamInfof(b+15,(n+" Glow Intensity").c_str(),FF_TYPE_STANDARD);
    SetParamInfof(b+16,(n+" Glow Radius").c_str(),FF_TYPE_STANDARD);
    SetParamInfo(b+17,(n+" Glow Enabled").c_str(),FF_TYPE_BOOLEAN,true);
+   SetParamInfof(b+18,(n+" Glow Red").c_str(),FF_TYPE_RED);
+   SetParamInfof(b+19,(n+" Glow Green").c_str(),FF_TYPE_GREEN);
+   SetParamInfof(b+20,(n+" Glow Blue").c_str(),FF_TYPE_BLUE);
   }
   SetTimeSupported(true);
  }
  FFResult InitGL(const FFGLViewportStruct* vp) override {
   if(!shader.Compile(vs,fs)||!quad.Initialise()){DeInitGL();return FF_FAIL;}
-  ScopedShaderBinding bind(shader.GetGLID());maskLoc=shader.FindUniform("Mask");colorLoc=shader.FindUniform("Color");texelLoc=shader.FindUniform("TexelSize");glowLoc=shader.FindUniform("GlowAmount");glowRadiusLoc=shader.FindUniform("GlowRadius");
+  ScopedShaderBinding bind(shader.GetGLID());maskLoc=shader.FindUniform("Mask");colorLoc=shader.FindUniform("Color");glowColorLoc=shader.FindUniform("GlowColor");texelLoc=shader.FindUniform("TexelSize");glowLoc=shader.FindUniform("GlowAmount");glowRadiusLoc=shader.FindUniform("GlowRadius");
   for(auto& c:canvases)if(!CreateCanvas(c,vp->width,vp->height)){DeInitGL();return FF_FAIL;}
   return CFFGLPlugin::InitGL(vp);
  }
@@ -110,7 +114,7 @@ public:
    glPixelStorei(GL_UNPACK_ALIGNMENT,4);
    glTexSubImage2D(GL_TEXTURE_2D,0,0,0,width,height,GL_BGRA,GL_UNSIGNED_BYTE,c.px);
    ScopedShaderBinding bind(shader.GetGLID());
-   glUniform1i(maskLoc,0);glUniform3f(colorLoc,lines[i].r,lines[i].g,lines[i].b);
+   glUniform1i(maskLoc,0);glUniform3f(colorLoc,lines[i].r,lines[i].g,lines[i].b);glUniform3f(glowColorLoc,lines[i].glowR,lines[i].glowG,lines[i].glowB);
    glUniform2f(texelLoc,1.0f/width,1.0f/height);glUniform1f(glowLoc,lines[i].glowEnabled?lines[i].glow:0.0f);glUniform1f(glowRadiusLoc,lines[i].glowRadius*std::min(width,height));
    glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
    quad.Draw();glBlendFunc(GL_ONE,GL_ZERO);glDisable(GL_BLEND);
@@ -133,13 +137,13 @@ public:
  }
  FFResult SetFloatParameter(unsigned int index,float v) override {
   const unsigned int b[3]={T1,T2,T3};
-  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+17)continue;Line& x=lines[i];
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+20)continue;Line& x=lines[i];
    switch(index-b[i]){
     case 1:x.enabled=v>.5f;break;case 2:x.shape=v;break;case 3:x.width=.05f+v*.85f;break;
     case 4:x.height=.05f+v*.85f;break;case 5:x.radius=v*.5f;break;case 6:x.speed=v*.5f;break;
     case 7:x.reverse=v>.5f;break;case 8:x.offset=v;break;case 9:x.pause=v>.5f;break;
     case 10:x.font=.08f+v*.72f;break;case 11:x.spacing=.5f+v*2.5f;break;
-    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;case 15:x.glow=v*3.0f;break;case 16:x.glowRadius=.002f+v*.045f;break;case 17:x.glowEnabled=v>.5f;break;
+    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;case 15:x.glow=v*3.0f;break;case 16:x.glowRadius=.002f+v*.045f;break;case 17:x.glowEnabled=v>.5f;break;case 18:x.glowR=v;break;case 19:x.glowG=v;break;case 20:x.glowB=v;break;
    }return FF_SUCCESS;
   }return FF_FAIL;
  }
@@ -150,7 +154,7 @@ public:
     case 1:return x.enabled;case 2:return x.shape;case 3:return (x.width-.05f)/.85f;case 4:return (x.height-.05f)/.85f;
     case 5:return x.radius/.5f;case 6:return x.speed/.5f;case 7:return x.reverse;case 8:return x.offset;
     case 9:return x.pause;case 10:return (x.font-.08f)/.72f;case 11:return (x.spacing-.5f)/2.5f;
-    case 12:return x.r;case 13:return x.g;case 14:return x.b;case 15:return x.glow/3.0f;case 16:return (x.glowRadius-.002f)/.045f;case 17:return x.glowEnabled;
+    case 12:return x.r;case 13:return x.g;case 14:return x.b;case 15:return x.glow/3.0f;case 16:return (x.glowRadius-.002f)/.045f;case 17:return x.glowEnabled;case 18:return x.glowR;case 19:return x.glowG;case 20:return x.glowB;
    }
   }return 0;
  }
@@ -191,10 +195,18 @@ private:
   float startOffset=x.offset*perimeter;
   float movement=x.pause?0.0f:now*x.speed*std::min(width,height)*direction;
   float cursor=-total*.5f+startOffset+movement;
+  auto pointAt=[&](float dist)->Point{
+   if(circle){float a=dist/perimeter*6.2831853f;return {cx+rx*cosf(a),cy+ry*sinf(a),-sinf(a),cosf(a)};}
+   return RectPoint(dist,cx,cy,rx,ry,r);
+  };
   for(size_t k=0;k<text.size();++k){
-   float d=cursor+adv[k]*.5f;Point p{};
-   if(circle){float a=d/perimeter*6.2831853f;p={cx+rx*cosf(a),cy+ry*sinf(a),-sinf(a),cosf(a)};}
-   else p=RectPoint(d,cx,cy,rx,ry,r);
+   float d=cursor+adv[k]*.5f;Point p=pointAt(d);
+   // Estimate tangent across a short distance to soften letter rotation at joins.
+   float smoothDist=std::max(2.0f,fs*.75f);
+   Point before=pointAt(d-smoothDist),after=pointAt(d+smoothDist);
+   float tx=after.x-before.x,ty=after.y-before.y;
+   float tl=sqrtf(tx*tx+ty*ty);
+   if(tl>0.0001f){p.tx=tx/tl;p.ty=ty/tl;}
    XFORM xf{};float nx=-p.ty,ny=p.tx;xf.eM11=p.tx;xf.eM12=p.ty;xf.eM21=nx;xf.eM22=ny;
    xf.eDx=p.x-nx*fs*.55f;xf.eDy=p.y-ny*fs*.55f;SetWorldTransform(c.dc,&xf);
    TextOutW(c.dc,0,0,&text[k],1);cursor+=adv[k];
@@ -203,7 +215,7 @@ private:
   for(size_t k=0,n=(size_t)width*height;k<n;++k){unsigned char* p=c.px+k*4;unsigned char a=std::max(p[0],std::max(p[1],p[2]));p[0]=p[1]=p[2]=255;p[3]=a;}
  }
  std::array<Line,3> lines{};std::array<Canvas,3> canvases{};
- FFGLShader shader;FFGLScreenQuad quad;GLint maskLoc=-1,colorLoc=-1,texelLoc=-1,glowLoc=-1,glowRadiusLoc=-1;int width=0,height=0;
+ FFGLShader shader;FFGLScreenQuad quad;GLint maskLoc=-1,colorLoc=-1,glowColorLoc=-1,texelLoc=-1,glowLoc=-1,glowRadiusLoc=-1;int width=0,height=0;
 };
 static CFFGLPluginInfo PluginInfo(PluginFactory<OrbitText>,"ORBT","Orbit Text",2,1,1,0,FF_SOURCE,
  "Three independently configurable text lines on editable orbit paths","Orbit Text for Resolume Arena");
