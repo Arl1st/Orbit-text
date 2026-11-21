@@ -1,376 +1,193 @@
 #include <FFGLSDK.h>
 #include <string>
 #include <vector>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 #include <chrono>
-
 using namespace ffglex;
 
-namespace
-{
-enum ParamIndex : unsigned int
-{
-    TEXT_1 = 0, SPEED_1, SIZE_1,
-    TEXT_2, SPEED_2, SIZE_2,
-    TEXT_3, SPEED_3, SIZE_3,
-    PATH_MODE, COLOR_R, COLOR_G, COLOR_B, GLOW
+namespace {
+enum Param : unsigned int {
+ T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,
+ T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,
+ T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3
 };
-
-static const char* kVertexShader = R"(
-#version 410 core
-layout(location = 0) in vec4 vPosition;
-layout(location = 1) in vec2 vUV;
-out vec2 uv;
-void main() { gl_Position = vPosition; uv = vUV; }
-)";
-
-static const char* kFragmentShader = R"(
-#version 410 core
-uniform sampler2D textTexture;
-uniform vec2 texelSize;
-uniform vec3 textColor;
-uniform float glowAmount;
-in vec2 uv;
-out vec4 fragColor;
-void main()
-{
-    float a = texture(textTexture, vec2(uv.x, 1.0 - uv.y)).a;
-    float g = 0.0;
-    for (int x = -2; x <= 2; ++x)
-        for (int y = -2; y <= 2; ++y)
-            g = max(g, texture(textTexture, vec2(uv.x, 1.0 - uv.y) + vec2(x,-y) * texelSize * 2.0).a);
-    float alpha = max(a, g * glowAmount);
-    fragColor = vec4(textColor, alpha);
+struct Line {
+ std::string text;
+ float enabled=1, shape=1, width=.46f, height=.25f, radius=.12f;
+ float speed=.18f, reverse=0, offset=0, pause=0, font=.34f, spacing=.5f;
+ float r=1,g=1,b=1;
+};
+struct Canvas { HDC dc=nullptr; HBITMAP bmp=nullptr,old=nullptr; unsigned char* px=nullptr; GLuint tex=0; };
+struct Point { float x,y,tx,ty; };
+const char* vs=R"(#version 410 core
+layout(location=0) in vec4 vPosition; layout(location=1) in vec2 vUV;
+out vec2 uv; void main(){gl_Position=vPosition;uv=vUV;})";
+const char* fs=R"(#version 410 core
+uniform sampler2D Mask; uniform vec3 Color; in vec2 uv; out vec4 fragColor;
+void main(){float a=texture(Mask,vec2(uv.x,1.0-uv.y)).a; fragColor=vec4(Color,a);})";
+std::wstring Wide(const std::string& s) {
+ if(s.empty()) return L"";
+ int n=MultiByteToWideChar(CP_UTF8,0,s.c_str(),(int)s.size(),nullptr,0);
+ if(n<=0) return std::wstring(s.begin(),s.end());
+ std::wstring out(n,L'\0'); MultiByteToWideChar(CP_UTF8,0,s.c_str(),(int)s.size(),out.data(),n); return out;
 }
-)";
-
-std::wstring Utf8ToWide(const std::string& s)
-{
-    std::wstring out;
-    for (size_t i = 0; i < s.size();) {
-        unsigned char c = (unsigned char)s[i++];
-        unsigned int cp = c;
-        if ((c & 0xE0) == 0xC0 && i < s.size()) {
-            cp = ((c & 0x1F) << 6) | ((unsigned char)s[i++] & 0x3F);
-        } else if ((c & 0xF0) == 0xE0 && i + 1 < s.size()) {
-            cp = ((c & 0x0F) << 12) | (((unsigned char)s[i++] & 0x3F) << 6);
-            cp |= ((unsigned char)s[i++] & 0x3F);
-        } else if ((c & 0xF8) == 0xF0 && i + 2 < s.size()) {
-            cp = ((c & 0x07) << 18) | (((unsigned char)s[i++] & 0x3F) << 12);
-            cp |= (((unsigned char)s[i++] & 0x3F) << 6) | ((unsigned char)s[i++] & 0x3F);
-        }
-        if (sizeof(wchar_t) == 2 && cp > 0xFFFF) {
-            cp -= 0x10000;
-            out.push_back((wchar_t)(0xD800 + (cp >> 10)));
-            out.push_back((wchar_t)(0xDC00 + (cp & 0x3FF)));
-        } else {
-            out.push_back((wchar_t)cp);
-        }
-    }
-    return out;
+Point RectPoint(float d,float cx,float cy,float rx,float ry,float r) {
+ r=std::max(0.0f,std::min(r,std::min(rx,ry)));
+ const float sw=2*(rx-r), sh=2*(ry-r), arc=1.57079632679f*r;
+ const float total=2*sw+2*sh+4*arc;
+ if(total<1) return {cx,cy,1,0};
+ d=std::fmod(d,total); if(d<0)d+=total;
+ if(d<sw)return {cx-rx+r+d,cy-ry,1,0}; d-=sw;
+ if(d<arc){float a=-1.57079632679f+d/std::max(r,.001f);return {cx+rx-r+r*cosf(a),cy-ry+r+r*sinf(a),-sinf(a),cosf(a)};} d-=arc;
+ if(d<sh)return {cx+rx,cy-ry+r+d,0,1}; d-=sh;
+ if(d<arc){float a=d/std::max(r,.001f);return {cx+rx-r+r*cosf(a),cy+ry-r+r*sinf(a),-sinf(a),cosf(a)};} d-=arc;
+ if(d<sw)return {cx+rx-r-d,cy+ry,-1,0}; d-=sw;
+ if(d<arc){float a=1.57079632679f+d/std::max(r,.001f);return {cx-rx+r+r*cosf(a),cy+ry-r+r*sinf(a),-sinf(a),cosf(a)};} d-=arc;
+ if(d<sh)return {cx-rx,cy+ry-r-d,0,-1}; d-=sh;
+ float a=3.14159265359f+d/std::max(r,.001f);
+ return {cx-rx+r+r*cosf(a),cy-ry+r+r*sinf(a),-sinf(a),cosf(a)};
 }
-
-struct PathPoint { float x, y, tx, ty; };
-
-PathPoint RoundedRectPoint(float d, float cx, float cy, float rx, float ry, float r)
-{
-    r = std::max(2.0f, std::min(r, std::min(rx, ry) - 1.0f));
-    const float top = 2.0f * (rx - r);
-    const float side = 2.0f * (ry - r);
-    const float arc = 1.57079632679f * r;
-    const float total = 2.0f * top + 2.0f * side + 4.0f * arc;
-    d = std::fmod(d, total);
-    if (d < 0.0f) d += total;
-
-    if (d < top) return {cx-rx+r+d, cy-ry, 1, 0};
-    d -= top;
-    if (d < arc) {
-        float a = -1.57079632679f + d/r;
-        return {cx+rx-r+r*std::cos(a), cy-ry+r+r*std::sin(a), -std::sin(a), std::cos(a)};
-    }
-    d -= arc;
-    if (d < side) return {cx+rx, cy-ry+r+d, 0, 1};
-    d -= side;
-    if (d < arc) {
-        float a = d/r;
-        return {cx+rx-r+r*std::cos(a), cy+ry-r+r*std::sin(a), -std::sin(a), std::cos(a)};
-    }
-    d -= arc;
-    if (d < top) return {cx+rx-r-d, cy+ry, -1, 0};
-    d -= top;
-    if (d < arc) {
-        float a = 1.57079632679f + d/r;
-        return {cx-rx+r+r*std::cos(a), cy+ry-r+r*std::sin(a), -std::sin(a), std::cos(a)};
-    }
-    d -= arc;
-    if (d < side) return {cx-rx, cy+ry-r-d, 0, -1};
-    d -= side;
-    float a = 3.14159265359f + d/r;
-    return {cx-rx+r+r*std::cos(a), cy-ry+r+r*std::sin(a), -std::sin(a), std::cos(a)};
-}
-
-class OrbitText final : public CFFGLPlugin
-{
+class OrbitText final : public CFFGLPlugin {
 public:
-    OrbitText() : CFFGLPlugin(false)
-    {
-        SetMinInputs(0);
-        SetMaxInputs(0);
-        SetParamInfo(TEXT_1, "Text 1", FF_TYPE_TEXT, "ORBIT TEXT");
-        SetParamInfo(SPEED_1, "Speed 1", FF_TYPE_STANDARD, 0.62f);
-        SetParamInfo(SIZE_1, "Size 1", FF_TYPE_STANDARD, 0.45f);
-        SetParamInfo(TEXT_2, "Text 2", FF_TYPE_TEXT, "RESOLUME ARENA");
-        SetParamInfo(SPEED_2, "Speed 2", FF_TYPE_STANDARD, 0.38f);
-        SetParamInfo(SIZE_2, "Size 2", FF_TYPE_STANDARD, 0.34f);
-        SetParamInfo(TEXT_3, "Text 3", FF_TYPE_TEXT, "LIVE VISUALS");
-        SetParamInfo(SPEED_3, "Speed 3", FF_TYPE_STANDARD, 0.56f);
-        SetParamInfo(SIZE_3, "Size 3", FF_TYPE_STANDARD, 0.28f);
-        SetOptionParamInfo(PATH_MODE, "Path", 3, 0);
-        SetParamElementInfo(PATH_MODE, 0, "Circle", 0.0f);
-        SetParamElementInfo(PATH_MODE, 1, "Rounded square", 1.0f);
-        SetParamElementInfo(PATH_MODE, 2, "Rounded rectangle", 2.0f);
-        SetParamInfo(COLOR_R, "Red", FF_TYPE_RED, 1.0f);
-        SetParamInfo(COLOR_G, "Green", FF_TYPE_GREEN, 1.0f);
-        SetParamInfo(COLOR_B, "Blue", FF_TYPE_BLUE, 1.0f);
-        SetParamInfo(GLOW, "Glow", FF_TYPE_STANDARD, 0.35f);
-        texts[0] = "ORBIT TEXT";
-        texts[1] = "RESOLUME ARENA";
-        texts[2] = "LIVE VISUALS";
-        floats[SPEED_1] = 0.62f; floats[SIZE_1] = 0.45f;
-        floats[SPEED_2] = 0.38f; floats[SIZE_2] = 0.34f;
-        floats[SPEED_3] = 0.56f; floats[SIZE_3] = 0.28f;
-        floats[PATH_MODE] = 0.0f;
-        floats[COLOR_R] = floats[COLOR_G] = floats[COLOR_B] = 1.0f;
-        floats[GLOW] = 0.35f;
-        SetTimeSupported(true);
-    }
-
-    FFResult InitGL(const FFGLViewportStruct* vp) override
-    {
-        if (!shader.Compile(kVertexShader, kFragmentShader)) return FF_FAIL;
-        if (!quad.Initialise()) { shader.FreeGLResources(); return FF_FAIL; }
-        if (!CreateCanvas(vp->width, vp->height)) { DeInitGL(); return FF_FAIL; }
-        ScopedShaderBinding bind(shader.GetGLID());
-        samplerLoc = shader.FindUniform("textTexture");
-        texelLoc = shader.FindUniform("texelSize");
-        colorLoc = shader.FindUniform("textColor");
-        glowLoc = shader.FindUniform("glowAmount");
-        glGenTextures(1, &texture);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
-        glUniform1i(samplerLoc, 0);
-        return CFFGLPlugin::InitGL(vp);
-    }
-
-    FFResult ProcessOpenGL(ProcessOpenGLStruct*) override
-    {
-        if (!dc || !pixels || !texture) return FF_FAIL;
-        RenderText();
-        glActiveTexture(GL_TEXTURE0);
-        GLint previous = 0;
-        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
-        {
-            ScopedShaderBinding bind(shader.GetGLID());
-            glUniform1i(samplerLoc, 0);
-            glUniform2f(texelLoc, 1.0f / (float)width, 1.0f / (float)height);
-            glUniform3f(colorLoc, floats[COLOR_R], floats[COLOR_G], floats[COLOR_B]);
-            glUniform1f(glowLoc, 0.35f + floats[GLOW] * 1.65f);
-            quad.Draw();
-        }
-        glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
-        return FF_SUCCESS;
-    }
-
-    FFResult DeInitGL() override
-    {
-        if (texture) { glDeleteTextures(1, &texture); texture = 0; }
-        shader.FreeGLResources();
-        quad.Release();
-        DestroyCanvas();
-        return FF_SUCCESS;
-    }
-
-    unsigned int Resize(const FFGLViewportStruct* vp) override
-    {
-        CFFGLPlugin::Resize(vp);
-        if (!CreateCanvas(vp->width, vp->height)) return FF_FAIL;
-        if (texture) {
-            glBindTexture(GL_TEXTURE_2D, texture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
-        }
-        return FF_SUCCESS;
-    }
-
-    FFResult SetFloatParameter(unsigned int index, float value) override
-    {
-        if (index >= SPEED_1 && index <= GLOW && index != TEXT_2 && index != TEXT_3) {
-            floats[index] = std::max(0.0f, std::min(1.0f, value));
-            return FF_SUCCESS;
-        }
-        return FF_FAIL;
-    }
-
-    float GetFloatParameter(unsigned int index) override
-    {
-        return index < 14 ? floats[index] : 0.0f;
-    }
-
-    FFResult SetTextParameter(unsigned int index, const char* value) override
-    {
-        if (index != TEXT_1 && index != TEXT_2 && index != TEXT_3) return FF_FAIL;
-        texts[index == TEXT_1 ? 0 : (index == TEXT_2 ? 1 : 2)] = value ? value : "";
-        return FF_SUCCESS;
-    }
-
-    char* GetTextParameter(unsigned int index) override
-    {
-        if (index != TEXT_1 && index != TEXT_2 && index != TEXT_3) return (char*)FF_FAIL;
-        return const_cast<char*>(texts[index == TEXT_1 ? 0 : (index == TEXT_2 ? 1 : 2)].c_str());
-    }
-
+ OrbitText():CFFGLPlugin(false) {
+  SetMinInputs(0);SetMaxInputs(0);
+  lines[0].text="ORBIT TEXT";lines[1].text="RESOLUME ARENA";lines[2].text="LIVE VISUALS";
+  const unsigned int base[3]={T1,T2,T3}; const char* names[3]={"Line 1","Line 2","Line 3"};
+  for(int i=0;i<3;++i){
+   unsigned int b=base[i];std::string n=names[i];
+   SetParamInfo(b,n.append(" Text").c_str(),FF_TYPE_TEXT,lines[i].text.c_str()); n=names[i];
+   SetParamInfo(b+1,(n+" Visible").c_str(),FF_TYPE_BOOLEAN,true);
+   SetOptionParamInfo(b+2,(n+" Path").c_str(),2,1.0f);
+   SetParamElementInfo(b+2,0,"Circle",0);SetParamElementInfo(b+2,1,"Rounded Rectangle",1);
+   SetParamInfof(b+3,(n+" Width").c_str(),FF_TYPE_STANDARD);
+   SetParamInfof(b+4,(n+" Height").c_str(),FF_TYPE_STANDARD);
+   SetParamInfof(b+5,(n+" Corner Radius").c_str(),FF_TYPE_STANDARD);
+   SetParamInfof(b+6,(n+" Speed").c_str(),FF_TYPE_STANDARD);
+   SetParamInfo(b+7,(n+" Reverse").c_str(),FF_TYPE_BOOLEAN,false);
+   SetParamInfof(b+8,(n+" Start Offset").c_str(),FF_TYPE_STANDARD);
+   SetParamInfo(b+9,(n+" Pause").c_str(),FF_TYPE_BOOLEAN,false);
+   SetParamInfof(b+10,(n+" Font Size").c_str(),FF_TYPE_STANDARD);
+   SetParamInfof(b+11,(n+" Letter Spacing").c_str(),FF_TYPE_STANDARD);
+   SetParamInfof(b+12,(n+" Red").c_str(),FF_TYPE_RED);
+   SetParamInfof(b+13,(n+" Green").c_str(),FF_TYPE_GREEN);
+   SetParamInfof(b+14,(n+" Blue").c_str(),FF_TYPE_BLUE);
+  }
+  SetTimeSupported(true);
+ }
+ FFResult InitGL(const FFGLViewportStruct* vp) override {
+  if(!shader.Compile(vs,fs)||!quad.Initialise()){DeInitGL();return FF_FAIL;}
+  ScopedShaderBinding bind(shader.GetGLID());maskLoc=shader.FindUniform("Mask");colorLoc=shader.FindUniform("Color");
+  for(auto& c:canvases)if(!CreateCanvas(c,vp->width,vp->height)){DeInitGL();return FF_FAIL;}
+  return CFFGLPlugin::InitGL(vp);
+ }
+ FFResult ProcessOpenGL(ProcessOpenGLStruct*) override {
+  if(width<1||height<1)return FF_FAIL;
+  static const auto start=std::chrono::steady_clock::now();
+  float now=std::chrono::duration<float>(std::chrono::steady_clock::now()-start).count();
+  for(int i=0;i<3;++i){
+   if(!lines[i].enabled)continue;
+   DrawLine(i,now);Canvas& c=canvases[i];
+   glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,c.tex);
+   glPixelStorei(GL_UNPACK_ALIGNMENT,4);
+   glTexSubImage2D(GL_TEXTURE_2D,0,0,0,width,height,GL_BGRA,GL_UNSIGNED_BYTE,c.px);
+   ScopedShaderBinding bind(shader.GetGLID());
+   glUniform1i(maskLoc,0);glUniform3f(colorLoc,lines[i].r,lines[i].g,lines[i].b);
+   glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+   quad.Draw();glBlendFunc(GL_ONE,GL_ZERO);glDisable(GL_BLEND);
+  }
+  return FF_SUCCESS;
+ }
+ FFResult DeInitGL() override {
+  for(auto& c:canvases)DestroyCanvas(c);
+  shader.FreeGLResources();quad.Release();return FF_SUCCESS;
+ }
+ unsigned int Resize(const FFGLViewportStruct* vp) override {
+  CFFGLPlugin::Resize(vp);for(auto& c:canvases)if(!CreateCanvas(c,vp->width,vp->height))return FF_FAIL;
+  return FF_SUCCESS;
+ }
+ FFResult SetTextParameter(unsigned int index,const char* value) override {
+  const unsigned int b[3]={T1,T2,T3};for(int i=0;i<3;++i)if(index==b[i]){lines[i].text=value?value:"";return FF_SUCCESS;}return FF_FAIL;
+ }
+ char* GetTextParameter(unsigned int index) override {
+  const unsigned int b[3]={T1,T2,T3};for(int i=0;i<3;++i)if(index==b[i])return const_cast<char*>(lines[i].text.c_str());return nullptr;
+ }
+ FFResult SetFloatParameter(unsigned int index,float v) override {
+  const unsigned int b[3]={T1,T2,T3};
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+14)continue;Line& x=lines[i];
+   switch(index-b[i]){
+    case 1:x.enabled=v>.5f;break;case 2:x.shape=v;break;case 3:x.width=.05f+v*.85f;break;
+    case 4:x.height=.05f+v*.85f;break;case 5:x.radius=v*.5f;break;case 6:x.speed=v*.5f;break;
+    case 7:x.reverse=v>.5f;break;case 8:x.offset=v;break;case 9:x.pause=v>.5f;break;
+    case 10:x.font=.08f+v*.72f;break;case 11:x.spacing=.5f+v*2.5f;break;
+    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;
+   }return FF_SUCCESS;
+  }return FF_FAIL;
+ }
+ float GetFloatParameter(unsigned int index) override {
+  const unsigned int b[3]={T1,T2,T3};
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+14)continue;const Line& x=lines[i];
+   switch(index-b[i]){
+    case 1:return x.enabled;case 2:return x.shape;case 3:return (x.width-.05f)/.85f;case 4:return (x.height-.05f)/.85f;
+    case 5:return x.radius/.5f;case 6:return x.speed/.5f;case 7:return x.reverse;case 8:return x.offset;
+    case 9:return x.pause;case 10:return (x.font-.08f)/.72f;case 11:return (x.spacing-.5f)/2.5f;
+    case 12:return x.r;case 13:return x.g;case 14:return x.b;
+   }
+  }return 0;
+ }
 private:
-    bool CreateCanvas(int w, int h)
-    {
-        DestroyCanvas();
-        width = std::max(64, std::min(w, 4096));
-        height = std::max(64, std::min(h, 4096));
-        BITMAPINFO bmi{};
-        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth = width;
-        bmi.bmiHeader.biHeight = -height;
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-        bmi.bmiHeader.biCompression = BI_RGB;
-        dc = CreateCompatibleDC(nullptr);
-        if (!dc) return false;
-        bitmap = CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, (void**)&pixels, nullptr, 0);
-        if (!bitmap || !pixels) { DestroyCanvas(); return false; }
-        oldBitmap = (HBITMAP)SelectObject(dc, bitmap);
-        SetGraphicsMode(dc, GM_ADVANCED);
-        return true;
-    }
-
-    void DestroyCanvas()
-    {
-        if (dc && oldBitmap) SelectObject(dc, oldBitmap);
-        if (bitmap) DeleteObject(bitmap);
-        if (dc) DeleteDC(dc);
-        dc = nullptr; bitmap = nullptr; oldBitmap = nullptr; pixels = nullptr;
-    }
-
-    void DrawLine(int line, float now)
-    {
-        std::wstring text = Utf8ToWide(texts[line]);
-        if (text.empty()) return;
-        float sizeValue = floats[SIZE_1 + line * 3];
-        int fontPx = (int)(22.0f + sizeValue * 78.0f);
-        HFONT font = CreateFontW(-fontPx, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Arial");
-        if (!font) return;
-        HGDIOBJ oldFont = SelectObject(dc, font);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, RGB(255,255,255));
-
-        std::vector<int> advances(text.size());
-        SIZE extent{};
-        int total = 0;
-        for (size_t i = 0; i < text.size(); ++i) {
-            GetTextExtentPoint32W(dc, &text[i], 1, &extent);
-            advances[i] = std::max(1L, extent.cx + 2);
-            total += advances[i];
-        }
-        if (total > 0) {
-            float speed = (floats[SPEED_1 + line * 3] - 0.5f) * 360.0f;
-            float travel = std::fmod(now * speed, (float)std::max(width, height) * 8.0f + total);
-            float offset = travel;
-            int mode = (int)(floats[PATH_MODE] + 0.5f);
-            float cx = width * 0.5f, cy = height * 0.5f;
-            float baseRx = mode == 0 ? std::min(width,height)*0.34f : width*0.42f;
-            float baseRy = mode == 0 ? std::min(width,height)*0.34f : (mode == 1 ? height*0.42f : height*0.32f);
-            float lane = (line - 1) * (fontPx + 12.0f);
-            float rx = std::max(30.0f, baseRx - lane);
-            float ry = std::max(30.0f, baseRy - lane);
-            float radius = std::max(12.0f, std::min(rx,ry)*0.16f);
-            float perimeter = mode == 0 ? 6.2831853f * std::sqrt((rx*rx + ry*ry)*0.5f)
-                : 2.0f*(rx-radius)*2.0f + 2.0f*(ry-radius)*2.0f + 6.2831853f*radius;
-
-            float cursor = -offset;
-            while (cursor < perimeter) cursor += total;
-            cursor = std::fmod(cursor, (float)total);
-            for (size_t i = 0; i < text.size(); ++i) {
-                float dist = cursor;
-                PathPoint p{};
-                if (mode == 0) {
-                    float a = dist / perimeter * 6.2831853f;
-                    p = {cx + rx*std::cos(a), cy + ry*std::sin(a),
-                         -std::sin(a), std::cos(a)};
-                } else {
-                    p = RoundedRectPoint(dist, cx, cy, rx, ry, radius);
-                }
-                float nx = -p.ty, ny = p.tx;
-                XFORM xf{};
-                xf.eM11 = p.tx; xf.eM12 = p.ty;
-                xf.eM21 = nx; xf.eM22 = ny;
-                xf.eDx = p.x - nx * fontPx * 0.55f;
-                xf.eDy = p.y - ny * fontPx * 0.55f;
-                SetWorldTransform(dc, &xf);
-                TextOutW(dc, 0, 0, &text[i], 1);
-                cursor += advances[i];
-                if (cursor >= perimeter) cursor -= perimeter;
-            }
-        }
-        ModifyWorldTransform(dc, nullptr, MWT_IDENTITY);
-        SelectObject(dc, oldFont);
-        DeleteObject(font);
-    }
-
-    void RenderText()
-    {
-        std::memset(pixels, 0, (size_t)width * (size_t)height * 4);
-        static const auto epoch = std::chrono::steady_clock::now();
-        float now = std::chrono::duration<float>(std::chrono::steady_clock::now() - epoch).count();
-        for (int line = 0; line < 3; ++line) DrawLine(line, now);
-        // GDI leaves the alpha byte undefined. Convert the white glyph coverage to alpha.
-        for (size_t i = 0, n = (size_t)width * (size_t)height; i < n; ++i) {
-            unsigned char* px = pixels + i*4;
-            unsigned char a = std::max(px[0], std::max(px[1], px[2]));
-            px[0] = px[1] = px[2] = 255;
-            px[3] = a;
-        }
-    }
-
-    FFGLShader shader;
-    FFGLScreenQuad quad;
-    GLuint texture = 0;
-    GLint samplerLoc = -1, texelLoc = -1, colorLoc = -1, glowLoc = -1;
-    int width = 0, height = 0;
-    HDC dc = nullptr;
-    HBITMAP bitmap = nullptr, oldBitmap = nullptr;
-    unsigned char* pixels = nullptr;
-    std::string texts[3];
-    float floats[14]{};
+ bool CreateCanvas(Canvas& c,int w,int h){
+  DestroyCanvas(c);width=std::max(64,std::min(w,4096));height=std::max(64,std::min(h,4096));
+  BITMAPINFO bi{};bi.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);bi.bmiHeader.biWidth=width;bi.bmiHeader.biHeight=-height;
+  bi.bmiHeader.biPlanes=1;bi.bmiHeader.biBitCount=32;bi.bmiHeader.biCompression=BI_RGB;
+  c.dc=CreateCompatibleDC(nullptr);if(!c.dc)return false;
+  c.bmp=CreateDIBSection(c.dc,&bi,DIB_RGB_COLORS,(void**)&c.px,nullptr,0);
+  if(!c.bmp||!c.px){DestroyCanvas(c);return false;}
+  c.old=(HBITMAP)SelectObject(c.dc,c.bmp);SetGraphicsMode(c.dc,GM_ADVANCED);
+  glGenTextures(1,&c.tex);glBindTexture(GL_TEXTURE_2D,c.tex);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,width,height,0,GL_BGRA,GL_UNSIGNED_BYTE,c.px);
+  return true;
+ }
+ void DestroyCanvas(Canvas& c){
+  if(c.tex){glDeleteTextures(1,&c.tex);c.tex=0;}
+  if(c.dc&&c.old)SelectObject(c.dc,c.old);if(c.bmp)DeleteObject(c.bmp);if(c.dc)DeleteDC(c.dc);
+  c.dc=nullptr;c.bmp=nullptr;c.old=nullptr;c.px=nullptr;
+ }
+ void DrawLine(int i,float now){
+  Canvas& c=canvases[i];Line& x=lines[i];std::memset(c.px,0,(size_t)width*height*4);
+  std::wstring text=Wide(x.text);if(text.empty())return;
+  int fs=std::max(8,(int)(10+x.font*110));HFONT font=CreateFontW(-fs,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+    OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Arial");
+  if(!font)return;HGDIOBJ old=SelectObject(c.dc,font);SetBkMode(c.dc,TRANSPARENT);SetTextColor(c.dc,RGB(255,255,255));
+  std::vector<int> adv(text.size());SIZE sz{};float total=0;
+  for(size_t k=0;k<text.size();++k){GetTextExtentPoint32W(c.dc,&text[k],1,&sz);adv[k]=std::max(1L,sz.cx+(int)(x.spacing*3));total+=adv[k];}
+  float cx=width*.5f,cy=height*.5f,rx=std::max(24.0f,x.width*width*.5f),ry=std::max(24.0f,x.height*height*.5f);
+  bool circle=x.shape<.5f;if(circle){float rad=std::min(rx,ry);rx=rad;ry=rad;}
+  float r=circle?std::min(rx,ry):std::min(x.radius*std::min(width,height),std::min(rx,ry));
+  float sw=2*(rx-r),sh=2*(ry-r),arc=1.57079632679f*r;
+  float perimeter=circle?6.2831853f*std::sqrt((rx*rx+ry*ry)*.5f):2*sw+2*sh+4*arc;
+  float direction=x.reverse?-1.0f:1.0f;
+  float startOffset=x.offset*perimeter;
+  float movement=x.pause?0.0f:now*x.speed*std::min(width,height)*direction;
+  float cursor=-total*.5f+startOffset+movement;
+  for(size_t k=0;k<text.size();++k){
+   float d=cursor+adv[k]*.5f;Point p{};
+   if(circle){float a=d/perimeter*6.2831853f;p={cx+rx*cosf(a),cy+ry*sinf(a),-sinf(a),cosf(a)};}
+   else p=RectPoint(d,cx,cy,rx,ry,r);
+   XFORM xf{};float nx=-p.ty,ny=p.tx;xf.eM11=p.tx;xf.eM12=p.ty;xf.eM21=nx;xf.eM22=ny;
+   xf.eDx=p.x-nx*fs*.55f;xf.eDy=p.y-ny*fs*.55f;SetWorldTransform(c.dc,&xf);
+   TextOutW(c.dc,0,0,&text[k],1);cursor+=adv[k];
+  }
+  ModifyWorldTransform(c.dc,nullptr,MWT_IDENTITY);SelectObject(c.dc,old);DeleteObject(font);
+  for(size_t k=0,n=(size_t)width*height;k<n;++k){unsigned char* p=c.px+k*4;unsigned char a=std::max(p[0],std::max(p[1],p[2]));p[0]=p[1]=p[2]=255;p[3]=a;}
+ }
+ std::array<Line,3> lines{};std::array<Canvas,3> canvases{};
+ FFGLShader shader;FFGLScreenQuad quad;GLint maskLoc=-1,colorLoc=-1;int width=0,height=0;
 };
-
-static CFFGLPluginInfo PluginInfo(
-    PluginFactory<OrbitText>,
-    "ORBT",
-    "Orbit Text",
-    2, 1,
-    1, 0,
-    FF_SOURCE,
-    "Three independent text lines moving along circular or rounded rectangular paths.",
-    "Orbit Text for Resolume Arena"
-);
-} // namespace
-
-
+static CFFGLPluginInfo PluginInfo(PluginFactory<OrbitText>,"ORBT","Orbit Text",2,1,1,0,FF_SOURCE,
+ "Three independently configurable text lines on editable orbit paths","Orbit Text for Resolume Arena");
+}
