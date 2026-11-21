@@ -22,7 +22,7 @@ struct Line {
  std::string text;
  float enabled=1, shape=1, width=.46f, height=.25f, radius=.12f;
  float speed=.18f, reverse=0, offset=0, pause=0, font=.34f, spacing=.5f;
- float r=1,g=1,b=1;
+ float r=1,g=1,b=1; float glow=0.65f, glowRadius=0.012f; bool glowEnabled=true;
 };
 struct Canvas { HDC dc=nullptr; HBITMAP bmp=nullptr,old=nullptr; unsigned char* px=nullptr; GLuint tex=0; };
 struct Point { float x,y,tx,ty; };
@@ -30,8 +30,17 @@ const char* vs=R"(#version 410 core
 layout(location=0) in vec4 vPosition; layout(location=1) in vec2 vUV;
 out vec2 uv; void main(){gl_Position=vPosition;uv=vUV;})";
 const char* fs=R"(#version 410 core
-uniform sampler2D Mask; uniform vec3 Color; in vec2 uv; out vec4 fragColor;
-void main(){float a=texture(Mask,vec2(uv.x,1.0-uv.y)).a; fragColor=vec4(Color,a);})";
+uniform sampler2D Mask; uniform vec3 Color; uniform vec2 TexelSize; uniform float GlowAmount; uniform float GlowRadius; in vec2 uv; out vec4 fragColor;
+void main(){
+ vec2 p=vec2(uv.x,1.0-uv.y); float a=texture(Mask,p).a;
+ vec2 d=TexelSize*GlowRadius; float blur=0.0;
+ blur+=texture(Mask,p+vec2(d.x,0)).a; blur+=texture(Mask,p-vec2(d.x,0)).a;
+ blur+=texture(Mask,p+vec2(0,d.y)).a; blur+=texture(Mask,p-vec2(0,d.y)).a;
+ blur+=texture(Mask,p+vec2(d.x,d.y)).a; blur+=texture(Mask,p+vec2(d.x,-d.y)).a;
+ blur+=texture(Mask,p+vec2(-d.x,d.y)).a; blur+=texture(Mask,p-vec2(d.x,d.y)).a;
+ float glow=clamp((blur/8.0)*GlowAmount,0.0,1.0);
+ fragColor=vec4(Color,max(a,glow));
+})";
 std::wstring Wide(const std::string& s) {
  if(s.empty()) return L"";
  int n=MultiByteToWideChar(CP_UTF8,0,s.c_str(),(int)s.size(),nullptr,0);
@@ -78,12 +87,15 @@ public:
    SetParamInfof(b+12,(n+" Red").c_str(),FF_TYPE_RED);
    SetParamInfof(b+13,(n+" Green").c_str(),FF_TYPE_GREEN);
    SetParamInfof(b+14,(n+" Blue").c_str(),FF_TYPE_BLUE);
+   SetParamInfof(b+15,(n+" Glow Intensity").c_str(),FF_TYPE_STANDARD);
+   SetParamInfof(b+16,(n+" Glow Radius").c_str(),FF_TYPE_STANDARD);
+   SetParamInfo(b+17,(n+" Glow Enabled").c_str(),FF_TYPE_BOOLEAN,true);
   }
   SetTimeSupported(true);
  }
  FFResult InitGL(const FFGLViewportStruct* vp) override {
   if(!shader.Compile(vs,fs)||!quad.Initialise()){DeInitGL();return FF_FAIL;}
-  ScopedShaderBinding bind(shader.GetGLID());maskLoc=shader.FindUniform("Mask");colorLoc=shader.FindUniform("Color");
+  ScopedShaderBinding bind(shader.GetGLID());maskLoc=shader.FindUniform("Mask");colorLoc=shader.FindUniform("Color");texelLoc=shader.FindUniform("TexelSize");glowLoc=shader.FindUniform("GlowAmount");glowRadiusLoc=shader.FindUniform("GlowRadius");
   for(auto& c:canvases)if(!CreateCanvas(c,vp->width,vp->height)){DeInitGL();return FF_FAIL;}
   return CFFGLPlugin::InitGL(vp);
  }
@@ -99,6 +111,7 @@ public:
    glTexSubImage2D(GL_TEXTURE_2D,0,0,0,width,height,GL_BGRA,GL_UNSIGNED_BYTE,c.px);
    ScopedShaderBinding bind(shader.GetGLID());
    glUniform1i(maskLoc,0);glUniform3f(colorLoc,lines[i].r,lines[i].g,lines[i].b);
+   glUniform2f(texelLoc,1.0f/width,1.0f/height);glUniform1f(glowLoc,lines[i].glowEnabled?lines[i].glow:0.0f);glUniform1f(glowRadiusLoc,lines[i].glowRadius*std::min(width,height));
    glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
    quad.Draw();glBlendFunc(GL_ONE,GL_ZERO);glDisable(GL_BLEND);
   }
@@ -120,13 +133,13 @@ public:
  }
  FFResult SetFloatParameter(unsigned int index,float v) override {
   const unsigned int b[3]={T1,T2,T3};
-  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+14)continue;Line& x=lines[i];
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+17)continue;Line& x=lines[i];
    switch(index-b[i]){
     case 1:x.enabled=v>.5f;break;case 2:x.shape=v;break;case 3:x.width=.05f+v*.85f;break;
     case 4:x.height=.05f+v*.85f;break;case 5:x.radius=v*.5f;break;case 6:x.speed=v*.5f;break;
     case 7:x.reverse=v>.5f;break;case 8:x.offset=v;break;case 9:x.pause=v>.5f;break;
     case 10:x.font=.08f+v*.72f;break;case 11:x.spacing=.5f+v*2.5f;break;
-    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;
+    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;case 15:x.glow=v*3.0f;break;case 16:x.glowRadius=.002f+v*.045f;break;case 17:x.glowEnabled=v>.5f;break;
    }return FF_SUCCESS;
   }return FF_FAIL;
  }
@@ -137,7 +150,7 @@ public:
     case 1:return x.enabled;case 2:return x.shape;case 3:return (x.width-.05f)/.85f;case 4:return (x.height-.05f)/.85f;
     case 5:return x.radius/.5f;case 6:return x.speed/.5f;case 7:return x.reverse;case 8:return x.offset;
     case 9:return x.pause;case 10:return (x.font-.08f)/.72f;case 11:return (x.spacing-.5f)/2.5f;
-    case 12:return x.r;case 13:return x.g;case 14:return x.b;
+    case 12:return x.r;case 13:return x.g;case 14:return x.b;case 15:return x.glow/3.0f;case 16:return (x.glowRadius-.002f)/.045f;case 17:return x.glowEnabled;
    }
   }return 0;
  }
@@ -190,7 +203,7 @@ private:
   for(size_t k=0,n=(size_t)width*height;k<n;++k){unsigned char* p=c.px+k*4;unsigned char a=std::max(p[0],std::max(p[1],p[2]));p[0]=p[1]=p[2]=255;p[3]=a;}
  }
  std::array<Line,3> lines{};std::array<Canvas,3> canvases{};
- FFGLShader shader;FFGLScreenQuad quad;GLint maskLoc=-1,colorLoc=-1;int width=0,height=0;
+ FFGLShader shader;FFGLScreenQuad quad;GLint maskLoc=-1,colorLoc=-1,texelLoc=-1,glowLoc=-1,glowRadiusLoc=-1;int width=0,height=0;
 };
 static CFFGLPluginInfo PluginInfo(PluginFactory<OrbitText>,"ORBT","Orbit Text",2,1,1,0,FF_SOURCE,
  "Three independently configurable text lines on editable orbit paths","Orbit Text for Resolume Arena");
