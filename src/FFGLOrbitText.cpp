@@ -149,7 +149,7 @@ public:
  }
  float GetFloatParameter(unsigned int index) override {
   const unsigned int b[3]={T1,T2,T3};
-  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+17)continue;const Line& x=lines[i];
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+20)continue;const Line& x=lines[i];
    switch(index-b[i]){
     case 1:return x.enabled;case 2:return x.shape;case 3:return (x.width-.05f)/.85f;case 4:return (x.height-.05f)/.85f;
     case 5:return x.radius/.5f;case 6:return x.speed/.5f;case 7:return x.reverse;case 8:return x.offset;
@@ -184,8 +184,17 @@ private:
   int fs=std::max(8,(int)(10+x.font*110));HFONT font=CreateFontW(-fs,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
     OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Arial");
   if(!font)return;HGDIOBJ old=SelectObject(c.dc,font);SetBkMode(c.dc,TRANSPARENT);SetTextColor(c.dc,RGB(255,255,255));
-  std::vector<int> adv(text.size());SIZE sz{};float total=0;
-  for(size_t k=0;k<text.size();++k){GetTextExtentPoint32W(c.dc,&text[k],1,&sz);adv[k]=std::max(1L,sz.cx+(int)(x.spacing*3));total+=adv[k];}
+  // Measure each glyph's real advance separately. Letter spacing is proportional
+  // to font size, so gaps remain visible at every output resolution.
+  std::vector<float> glyphWidth(text.size());SIZE sz{};float total=0;
+  const float spacing01=std::clamp((x.spacing-.5f)/2.5f,0.0f,1.0f);
+  const float letterGap=std::max(1.0f,fs*(0.04f+spacing01*0.16f));
+  for(size_t k=0;k<text.size();++k){
+   GetTextExtentPoint32W(c.dc,&text[k],1,&sz);
+   glyphWidth[k]=(float)std::max(1L,sz.cx);
+   total+=glyphWidth[k];
+   if(k+1<text.size())total+=letterGap;
+  }
   float cx=width*.5f,cy=height*.5f,rx=std::max(24.0f,x.width*width*.5f),ry=std::max(24.0f,x.height*height*.5f);
   bool circle=x.shape<.5f;if(circle){float rad=std::min(rx,ry);rx=rad;ry=rad;}
   float r=circle?std::min(rx,ry):std::min(x.radius*std::min(width,height),std::min(rx,ry));
@@ -200,16 +209,23 @@ private:
    return RectPoint(dist,cx,cy,rx,ry,r);
   };
   for(size_t k=0;k<text.size();++k){
-   float d=cursor+adv[k]*.5f;Point p=pointAt(d);
-   // Estimate tangent across a short distance to soften letter rotation at joins.
-   float smoothDist=std::max(2.0f,fs*.75f);
-   Point before=pointAt(d-smoothDist),after=pointAt(d+smoothDist);
-   float tx=after.x-before.x,ty=after.y-before.y;
-   float tl=sqrtf(tx*tx+ty*ty);
-   if(tl>0.0001f){p.tx=tx/tl;p.ty=ty/tl;}
-   XFORM xf{};float nx=-p.ty,ny=p.tx;xf.eM11=p.tx;xf.eM12=p.ty;xf.eM21=nx;xf.eM22=ny;
-   xf.eDx=p.x-nx*fs*.55f;xf.eDy=p.y-ny*fs*.55f;SetWorldTransform(c.dc,&xf);
-   TextOutW(c.dc,0,0,&text[k],1);cursor+=adv[k];
+   // Place the glyph center on the path, not its left edge. The previous
+   // version sampled the path at the center but drew from that point forward,
+   // which made neighboring glyphs crowd and overlap.
+   float d=cursor+glyphWidth[k]*.5f;Point p=pointAt(d);
+   float tl=sqrtf(p.tx*p.tx+p.ty*p.ty);
+   float tx=tl>0.0001f?p.tx/tl:1.0f;
+   float ty=tl>0.0001f?p.ty/tl:0.0f;
+   float nx=-ty,ny=tx;
+   // An orthonormal transform rotates the complete glyph without shearing or scaling it.
+   XFORM xf{};
+   xf.eM11=tx;xf.eM12=ty;xf.eM21=nx;xf.eM22=ny;
+   xf.eDx=p.x-tx*glyphWidth[k]*.5f-nx*fs*.5f;
+   xf.eDy=p.y-ty*glyphWidth[k]*.5f-ny*fs*.5f;
+   SetWorldTransform(c.dc,&xf);
+   TextOutW(c.dc,0,0,&text[k],1);
+   cursor+=glyphWidth[k];
+   if(k+1<text.size())cursor+=letterGap;
   }
   ModifyWorldTransform(c.dc,nullptr,MWT_IDENTITY);SelectObject(c.dc,old);DeleteObject(font);
   for(size_t k=0,n=(size_t)width*height;k<n;++k){unsigned char* p=c.px+k*4;unsigned char a=std::max(p[0],std::max(p[1],p[2]));p[0]=p[1]=p[2]=255;p[3]=a;}
