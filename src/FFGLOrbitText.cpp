@@ -226,62 +226,44 @@ private:
    return RectPoint(dist,cx,cy,rx,ry,r);
   };
   const float smooth=std::max(0.0f,std::min(1.0f,x.cornerSmoothness));
-  size_t k=0;
-  while(k<text.size()){
-   if(text[k]==L' '){
-    cursor+=glyphWidth[k];
-    if(k+1<text.size())cursor+=letterGap;
-    ++k;
-    continue;
+  // Smooth only the glyph orientation, never its position. Each glyph center
+  // remains exactly on the original path; the tangent is averaged over a
+  // font-scaled distance window to avoid abrupt angular changes at corners.
+  auto smoothTangentAt=[&](float dist)->Point{
+   const float window=fs*(0.20f+2.80f*smooth);
+   const int samples=16;
+   float vx=0.0f,vy=0.0f,totalWeight=0.0f;
+   for(int n=-samples;n<=samples;++n){
+    const float t=(float)n/(float)samples;
+    const float weight=1.0f-std::fabs(t); // triangular low-pass window
+    Point q=pointAt(dist+t*window);
+    float qlen=sqrtf(q.tx*q.tx+q.ty*q.ty);
+    if(qlen>0.0001f){vx+=(q.tx/qlen)*weight;vy+=(q.ty/qlen)*weight;totalWeight+=weight;}
    }
-   // Treat each word as a coherent moving group. Its center follows the path,
-   // while its letters share a common orientation and a straight baseline.
-   // At smoothing=0 every glyph follows the path individually; at smoothing=1
-   // the whole word moves and rotates as one rigid unit.
-   const size_t first=k;
-   float wordWidth=0.0f;
-   while(k<text.size()&&text[k]!=L' '){
-    wordWidth+=glyphWidth[k];
-    if(k+1<text.size()&&text[k+1]!=L' ')wordWidth+=letterGap;
-    ++k;
+   float len=sqrtf(vx*vx+vy*vy);
+   if(len<0.0001f){
+    Point q=pointAt(dist);
+    return q;
    }
-   const float wordCenterDistance=cursor+wordWidth*.5f;
-   Point anchor=pointAt(wordCenterDistance);
-   float anchorLen=sqrtf(anchor.tx*anchor.tx+anchor.ty*anchor.ty);
-   float anchorTx=anchorLen>0.0001f?anchor.tx/anchorLen:1.0f;
-   float anchorTy=anchorLen>0.0001f?anchor.ty/anchorLen:0.0f;
-   float anchorAngle=atan2f(anchorTy,anchorTx);
-   float localOffset=-wordWidth*.5f;
-   for(size_t j=first;j<k;++j){
-    const float gw=glyphWidth[j];
-    const float along=localOffset+gw*.5f;
-    const float d=cursor+along+wordWidth*.5f;
-    Point pathPoint=pointAt(d);
-    float rawLen=sqrtf(pathPoint.tx*pathPoint.tx+pathPoint.ty*pathPoint.ty);
-    float rawTx=rawLen>0.0001f?pathPoint.tx/rawLen:1.0f;
-    float rawTy=rawLen>0.0001f?pathPoint.ty/rawLen:0.0f;
-    float rawAngle=atan2f(rawTy,rawTx);
-    float angleDelta=atan2f(sinf(rawAngle-anchorAngle),cosf(rawAngle-anchorAngle));
-    float angle=anchorAngle+(1.0f-smooth)*angleDelta;
-    float tx=cosf(angle),ty=sinf(angle);
-    // Blend the glyph center from the exact path point toward the word's
-    // straight baseline. This removes the visual "fan" at a corner.
-    float rigidX=anchor.x+anchorTx*along;
-    float rigidY=anchor.y+anchorTy*along;
-    float px=pathPoint.x*(1.0f-smooth)+rigidX*smooth;
-    float py=pathPoint.y*(1.0f-smooth)+rigidY*smooth;
-    float nx=-ty,ny=tx;
+   return {0.0f,0.0f,vx/len,vy/len};
+  };
+  for(size_t k=0;k<text.size();++k){
+   const float glyphCenter=cursor+glyphWidth[k]*0.5f;
+   if(text[k]!=L' '){
+    Point p=pointAt(glyphCenter);
+    Point tangent=smoothTangentAt(glyphCenter);
+    const float tx=tangent.tx,ty=tangent.ty;
+    const float nx=-ty,ny=tx;
+    // Orthonormal transform: no glyph scaling, shear, or position blending.
     XFORM xf{};
     xf.eM11=tx;xf.eM12=ty;xf.eM21=nx;xf.eM22=ny;
-    xf.eDx=px-tx*gw*.5f-nx*fs*.5f;
-    xf.eDy=py-ty*gw*.5f-ny*fs*.5f;
+    xf.eDx=p.x-tx*glyphWidth[k]*.5f-nx*fs*.5f;
+    xf.eDy=p.y-ty*glyphWidth[k]*.5f-ny*fs*.5f;
     SetWorldTransform(c.dc,&xf);
-    TextOutW(c.dc,0,0,&text[j],1);
-    localOffset+=gw;
-    if(j+1<k)localOffset+=letterGap;
+    TextOutW(c.dc,0,0,&text[k],1);
    }
-   cursor+=wordWidth;
-   if(k<text.size())cursor+=letterGap;
+   cursor+=glyphWidth[k];
+   if(k+1<text.size())cursor+=letterGap;
   }
   ModifyWorldTransform(c.dc,nullptr,MWT_IDENTITY);SelectObject(c.dc,old);DeleteObject(font);
   for(size_t k=0,n=(size_t)width*height;k<n;++k){unsigned char* p=c.px+k*4;unsigned char a=std::max(p[0],std::max(p[1],p[2]));p[0]=p[1]=p[2]=255;p[3]=a;}
