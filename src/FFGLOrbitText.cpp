@@ -213,9 +213,21 @@ private:
    // version sampled the path at the center but drew from that point forward,
    // which made neighboring glyphs crowd and overlap.
    float d=cursor+glyphWidth[k]*.5f;Point p=pointAt(d);
-   float tl=sqrtf(p.tx*p.tx+p.ty*p.ty);
-   float tx=tl>0.0001f?p.tx/tl:1.0f;
-   float ty=tl>0.0001f?p.ty/tl:0.0f;
+   // Smooth the orientation over a short arc-length window around the glyph.
+   // Keep the glyph center on the exact path, but derive its angle from the
+   // chord spanning neighboring path samples. This eases the corner transition
+   // without scaling or shearing the glyph.
+   float smoothDist=std::min(std::max(6.0f,fs*1.25f),perimeter*.08f);
+   Point before=pointAt(d-smoothDist);
+   Point after=pointAt(d+smoothDist);
+   float tx=after.x-before.x,ty=after.y-before.y;
+   float tl=sqrtf(tx*tx+ty*ty);
+   if(tl>0.0001f){tx/=tl;ty/=tl;}
+   else {
+    float tangentLen=sqrtf(p.tx*p.tx+p.ty*p.ty);
+    tx=tangentLen>0.0001f?p.tx/tangentLen:1.0f;
+    ty=tangentLen>0.0001f?p.ty/tangentLen:0.0f;
+   }
    float nx=-ty,ny=tx;
    // An orthonormal transform rotates the complete glyph without shearing or scaling it.
    XFORM xf{};
