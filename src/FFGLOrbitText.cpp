@@ -14,15 +14,16 @@ using namespace ffglex;
 
 namespace {
 enum Param : unsigned int {
- T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,GI1,GR1,GE1,GCR1,GCG1,GCB1,
- T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,GI2,GR2,GE2,GCR2,GCG2,GCB2,
- T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3,GI3,GR3,GE3,GCR3,GCG3,GCB3
+ T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,GI1,GR1,GE1,GCR1,GCG1,GCB1,CS1,
+ T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,GI2,GR2,GE2,GCR2,GCG2,GCB2,CS2,
+ T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3,GI3,GR3,GE3,GCR3,GCG3,GCB3,CS3
 };
 struct Line {
  std::string text;
  float enabled=1, shape=1, width=.46f, height=.25f, radius=.12f;
  float speed=.18f, reverse=0, offset=0, pause=0, font=.34f, spacing=.5f;
  float r=1,g=1,b=1; float glow=0.65f, glowRadius=0.012f; float glowR=.25f,glowG=.65f,glowB=1.0f; bool glowEnabled=true;
+ float cornerSmoothness=.55f;
 };
 struct Canvas { HDC dc=nullptr; HBITMAP bmp=nullptr,old=nullptr; unsigned char* px=nullptr; GLuint tex=0; };
 struct Point { float x,y,tx,ty; };
@@ -94,6 +95,7 @@ public:
    SetParamInfof(b+18,(n+" Glow Red").c_str(),FF_TYPE_RED);
    SetParamInfof(b+19,(n+" Glow Green").c_str(),FF_TYPE_GREEN);
    SetParamInfof(b+20,(n+" Glow Blue").c_str(),FF_TYPE_BLUE);
+   SetParamInfof(b+21,(n+" Corner Smoothing").c_str(),FF_TYPE_STANDARD);
   }
   SetTimeSupported(true);
  }
@@ -137,24 +139,24 @@ public:
  }
  FFResult SetFloatParameter(unsigned int index,float v) override {
   const unsigned int b[3]={T1,T2,T3};
-  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+20)continue;Line& x=lines[i];
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+21)continue;Line& x=lines[i];
    switch(index-b[i]){
     case 1:x.enabled=v>.5f;break;case 2:x.shape=v;break;case 3:x.width=.05f+v*.85f;break;
     case 4:x.height=.05f+v*.85f;break;case 5:x.radius=v*.5f;break;case 6:x.speed=v*.5f;break;
     case 7:x.reverse=v>.5f;break;case 8:x.offset=v;break;case 9:x.pause=v>.5f;break;
     case 10:x.font=.08f+v*.72f;break;case 11:x.spacing=.5f+v*2.5f;break;
-    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;case 15:x.glow=v*3.0f;break;case 16:x.glowRadius=.002f+v*.045f;break;case 17:x.glowEnabled=v>.5f;break;case 18:x.glowR=v;break;case 19:x.glowG=v;break;case 20:x.glowB=v;break;
+    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;case 15:x.glow=v*3.0f;break;case 16:x.glowRadius=.002f+v*.045f;break;case 17:x.glowEnabled=v>.5f;break;case 18:x.glowR=v;break;case 19:x.glowG=v;break;case 20:x.glowB=v;break;case 21:x.cornerSmoothness=v;break;
    }return FF_SUCCESS;
   }return FF_FAIL;
  }
  float GetFloatParameter(unsigned int index) override {
   const unsigned int b[3]={T1,T2,T3};
-  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+20)continue;const Line& x=lines[i];
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+21)continue;const Line& x=lines[i];
    switch(index-b[i]){
     case 1:return x.enabled;case 2:return x.shape;case 3:return (x.width-.05f)/.85f;case 4:return (x.height-.05f)/.85f;
     case 5:return x.radius/.5f;case 6:return x.speed/.5f;case 7:return x.reverse;case 8:return x.offset;
     case 9:return x.pause;case 10:return (x.font-.08f)/.72f;case 11:return (x.spacing-.5f)/2.5f;
-    case 12:return x.r;case 13:return x.g;case 14:return x.b;case 15:return x.glow/3.0f;case 16:return (x.glowRadius-.002f)/.045f;case 17:return x.glowEnabled;case 18:return x.glowR;case 19:return x.glowG;case 20:return x.glowB;
+    case 12:return x.r;case 13:return x.g;case 14:return x.b;case 15:return x.glow/3.0f;case 16:return (x.glowRadius-.002f)/.045f;case 17:return x.glowEnabled;case 18:return x.glowR;case 19:return x.glowG;case 20:return x.glowB;case 21:return x.cornerSmoothness;
    }
   }return 0;
  }
@@ -196,8 +198,24 @@ private:
    if(k+1<text.size())total+=letterGap;
   }
   float cx=width*.5f,cy=height*.5f,rx=std::max(24.0f,x.width*width*.5f),ry=std::max(24.0f,x.height*height*.5f);
-  bool circle=x.shape<.5f;if(circle){float rad=std::min(rx,ry);rx=rad;ry=rad;}
-  float r=circle?std::min(rx,ry):std::min(x.radius*std::min(width,height),std::min(rx,ry));
+  bool circle=x.shape<.5f;
+  float r=0.0f;
+  if(circle){
+   float rad=std::min(rx,ry);rx=rad;ry=rad;r=rad;
+  } else {
+   float smooth01=std::max(0.0f,std::min(1.0f,x.cornerSmoothness));
+   // Keep the corner curvature gentle relative to glyph height. A tight
+   // radius makes neighboring letters rotate too far between glyph centers.
+   // Expand the path symmetrically only when needed and only within the frame.
+   float desiredRadius=fs*(2.5f+3.0f*smooth01);
+   float requestedRadius=std::max(x.radius*std::min(width,height),desiredRadius);
+   float expand=std::max(0.0f,requestedRadius-std::min(rx,ry));
+   float roomX=std::max(0.0f,width*.46f-rx);
+   float roomY=std::max(0.0f,height*.46f-ry);
+   expand=std::min(expand,std::min(roomX,roomY));
+   rx+=expand;ry+=expand;
+   r=std::min(requestedRadius,std::min(rx,ry));
+  }
   float sw=2*(rx-r),sh=2*(ry-r),arc=1.57079632679f*r;
   float perimeter=circle?6.2831853f*std::sqrt((rx*rx+ry*ry)*.5f):2*sw+2*sh+4*arc;
   float direction=x.reverse?-1.0f:1.0f;
@@ -213,24 +231,12 @@ private:
    // version sampled the path at the center but drew from that point forward,
    // which made neighboring glyphs crowd and overlap.
    float d=cursor+glyphWidth[k]*.5f;Point p=pointAt(d);
-   // Smooth the orientation over a short arc-length window around the glyph.
-   // Keep the glyph center on the exact path, but derive its angle from the
-   // chord spanning neighboring path samples. This eases the corner transition
-   // without scaling or shearing the glyph.
-   // Use a wider spatial smoothing window: a tight window still lets
-   // adjacent glyphs change heading too quickly on compact corners.
-   float smoothDist=std::max(32.0f,std::max(fs*4.0f,glyphWidth[k]*3.0f));
-   smoothDist=std::min(smoothDist,perimeter*.20f);
-   Point before=pointAt(d-smoothDist);
-   Point after=pointAt(d+smoothDist);
-   float tx=after.x-before.x,ty=after.y-before.y;
-   float tl=sqrtf(tx*tx+ty*ty);
-   if(tl>0.0001f){tx/=tl;ty/=tl;}
-   else {
-    float tangentLen=sqrtf(p.tx*p.tx+p.ty*p.ty);
-    tx=tangentLen>0.0001f?p.tx/tangentLen:1.0f;
-    ty=tangentLen>0.0001f?p.ty/tangentLen:0.0f;
-   }
+   // Use the tangent of the wider font-aware rounded path. This changes the
+   // path curvature itself, so letters rotate gradually instead of merely
+   // averaging a tangent along the same tight arc.
+   float tangentLen=sqrtf(p.tx*p.tx+p.ty*p.ty);
+   float tx=tangentLen>0.0001f?p.tx/tangentLen:1.0f;
+   float ty=tangentLen>0.0001f?p.ty/tangentLen:0.0f;
    float nx=-ty,ny=tx;
    // An orthonormal transform rotates the complete glyph without shearing or scaling it.
    XFORM xf{};
