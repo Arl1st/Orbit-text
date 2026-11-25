@@ -14,9 +14,10 @@ using namespace ffglex;
 
 namespace {
 enum Param : unsigned int {
- T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,GI1,GR1,GE1,GCR1,GCG1,GCB1,CS1,
- T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,GI2,GR2,GE2,GCR2,GCG2,GCB2,CS2,
- T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3,GI3,GR3,GE3,GCR3,GCG3,GCB3,CS3
+ T1,E1,S1,W1,H1,R1,V1,D1,O1,P1,F1,L1,CR1,CG1,CB1,GI1,GR1,GE1,GCR1,GCG1,GCB1,
+ T2,E2,S2,W2,H2,R2,V2,D2,O2,P2,F2,L2,CR2,CG2,CB2,GI2,GR2,GE2,GCR2,GCG2,GCB2,
+ T3,E3,S3,W3,H3,R3,V3,D3,O3,P3,F3,L3,CR3,CG3,CB3,GI3,GR3,GE3,GCR3,GCG3,GCB3,
+ CS1,CS2,CS3
 };
 struct Line {
  std::string text;
@@ -95,8 +96,11 @@ public:
    SetParamInfof(b+18,(n+" Glow Red").c_str(),FF_TYPE_RED);
    SetParamInfof(b+19,(n+" Glow Green").c_str(),FF_TYPE_GREEN);
    SetParamInfof(b+20,(n+" Glow Blue").c_str(),FF_TYPE_BLUE);
-   SetParamInfof(b+21,(n+" Corner Smoothing").c_str(),FF_TYPE_STANDARD);
+
   }
+  const unsigned int smoothParams[3]={CS1,CS2,CS3};
+  const char* smoothNames[3]={"Line 1 Corner Smoothing","Line 2 Corner Smoothing","Line 3 Corner Smoothing"};
+  for(int i=0;i<3;++i)SetParamInfof(smoothParams[i],smoothNames[i],FF_TYPE_STANDARD);
   SetTimeSupported(true);
  }
  FFResult InitGL(const FFGLViewportStruct* vp) override {
@@ -139,26 +143,34 @@ public:
  }
  FFResult SetFloatParameter(unsigned int index,float v) override {
   const unsigned int b[3]={T1,T2,T3};
-  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+21)continue;Line& x=lines[i];
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+20)continue;Line& x=lines[i];
    switch(index-b[i]){
     case 1:x.enabled=v>.5f;break;case 2:x.shape=v;break;case 3:x.width=.05f+v*.85f;break;
     case 4:x.height=.05f+v*.85f;break;case 5:x.radius=v*.5f;break;case 6:x.speed=v*.5f;break;
     case 7:x.reverse=v>.5f;break;case 8:x.offset=v;break;case 9:x.pause=v>.5f;break;
     case 10:x.font=.08f+v*.72f;break;case 11:x.spacing=.5f+v*2.5f;break;
-    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;case 15:x.glow=v*3.0f;break;case 16:x.glowRadius=.002f+v*.045f;break;case 17:x.glowEnabled=v>.5f;break;case 18:x.glowR=v;break;case 19:x.glowG=v;break;case 20:x.glowB=v;break;case 21:x.cornerSmoothness=v;break;
+    case 12:x.r=v;break;case 13:x.g=v;break;case 14:x.b=v;break;case 15:x.glow=v*3.0f;break;case 16:x.glowRadius=.002f+v*.045f;break;case 17:x.glowEnabled=v>.5f;break;case 18:x.glowR=v;break;case 19:x.glowG=v;break;case 20:x.glowB=v;break;
    }return FF_SUCCESS;
-  }return FF_FAIL;
+  }
+  if(index==CS1){lines[0].cornerSmoothness=v;return FF_SUCCESS;}
+  if(index==CS2){lines[1].cornerSmoothness=v;return FF_SUCCESS;}
+  if(index==CS3){lines[2].cornerSmoothness=v;return FF_SUCCESS;}
+  return FF_FAIL;
  }
  float GetFloatParameter(unsigned int index) override {
   const unsigned int b[3]={T1,T2,T3};
-  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+21)continue;const Line& x=lines[i];
+  for(int i=0;i<3;++i){if(index<b[i]||index>b[i]+20)continue;const Line& x=lines[i];
    switch(index-b[i]){
     case 1:return x.enabled;case 2:return x.shape;case 3:return (x.width-.05f)/.85f;case 4:return (x.height-.05f)/.85f;
     case 5:return x.radius/.5f;case 6:return x.speed/.5f;case 7:return x.reverse;case 8:return x.offset;
     case 9:return x.pause;case 10:return (x.font-.08f)/.72f;case 11:return (x.spacing-.5f)/2.5f;
-    case 12:return x.r;case 13:return x.g;case 14:return x.b;case 15:return x.glow/3.0f;case 16:return (x.glowRadius-.002f)/.045f;case 17:return x.glowEnabled;case 18:return x.glowR;case 19:return x.glowG;case 20:return x.glowB;case 21:return x.cornerSmoothness;
+    case 12:return x.r;case 13:return x.g;case 14:return x.b;case 15:return x.glow/3.0f;case 16:return (x.glowRadius-.002f)/.045f;case 17:return x.glowEnabled;case 18:return x.glowR;case 19:return x.glowG;case 20:return x.glowB;
    }
-  }return 0;
+  }
+  if(index==CS1)return lines[0].cornerSmoothness;
+  if(index==CS2)return lines[1].cornerSmoothness;
+  if(index==CS3)return lines[2].cornerSmoothness;
+  return 0;
  }
 private:
  bool CreateCanvas(Canvas& c,int w,int h){
