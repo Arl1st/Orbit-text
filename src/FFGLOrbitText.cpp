@@ -217,7 +217,10 @@ private:
    // Keep the glyph center on the exact path, but derive its angle from the
    // chord spanning neighboring path samples. This eases the corner transition
    // without scaling or shearing the glyph.
-   float smoothDist=std::min(std::max(6.0f,fs*1.25f),perimeter*.08f);
+   // Use a wider spatial smoothing window: a tight window still lets
+   // adjacent glyphs change heading too quickly on compact corners.
+   float smoothDist=std::max(32.0f,std::max(fs*4.0f,glyphWidth[k]*3.0f));
+   smoothDist=std::min(smoothDist,perimeter*.20f);
    Point before=pointAt(d-smoothDist);
    Point after=pointAt(d+smoothDist);
    float tx=after.x-before.x,ty=after.y-before.y;
