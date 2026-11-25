@@ -187,7 +187,7 @@ private:
   // Measure each glyph's real advance separately. Letter spacing is proportional
   // to font size, so gaps remain visible at every output resolution.
   std::vector<float> glyphWidth(text.size());SIZE sz{};float total=0;
-  const float spacing01=std::clamp((x.spacing-.5f)/2.5f,0.0f,1.0f);
+  const float spacing01=std::max(0.0f,std::min(1.0f,(x.spacing-.5f)/2.5f));
   const float letterGap=std::max(1.0f,fs*(0.04f+spacing01*0.16f));
   for(size_t k=0;k<text.size();++k){
    GetTextExtentPoint32W(c.dc,&text[k],1,&sz);
