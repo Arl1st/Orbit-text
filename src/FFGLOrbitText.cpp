@@ -24,7 +24,7 @@ struct Line {
  float enabled=1, shape=1, width=.46f, height=.25f, radius=.12f;
  float speed=.18f, reverse=0, offset=0, pause=0, font=.34f, spacing=.5f;
  float r=1,g=1,b=1; float glow=0.65f, glowRadius=0.012f; float glowR=.25f,glowG=.65f,glowB=1.0f; bool glowEnabled=true;
- float cornerSmoothness=.55f;
+ float cornerSmoothness=.90f;
 };
 struct Canvas { HDC dc=nullptr; HBITMAP bmp=nullptr,old=nullptr; unsigned char* px=nullptr; GLuint tex=0; };
 struct Point { float x,y,tx,ty; };
@@ -211,23 +211,10 @@ private:
   }
   float cx=width*.5f,cy=height*.5f,rx=std::max(24.0f,x.width*width*.5f),ry=std::max(24.0f,x.height*height*.5f);
   bool circle=x.shape<.5f;
-  float r=0.0f;
-  if(circle){
-   float rad=std::min(rx,ry);rx=rad;ry=rad;r=rad;
-  } else {
-   float smooth01=std::max(0.0f,std::min(1.0f,x.cornerSmoothness));
-   // Keep the corner curvature gentle relative to glyph height. A tight
-   // radius makes neighboring letters rotate too far between glyph centers.
-   // Expand the path symmetrically only when needed and only within the frame.
-   float desiredRadius=fs*(2.5f+3.0f*smooth01);
-   float requestedRadius=std::max(x.radius*std::min(width,height),desiredRadius);
-   float expand=std::max(0.0f,requestedRadius-std::min(rx,ry));
-   float roomX=std::max(0.0f,width*.46f-rx);
-   float roomY=std::max(0.0f,height*.46f-ry);
-   expand=std::min(expand,std::min(roomX,roomY));
-   rx+=expand;ry+=expand;
-   r=std::min(requestedRadius,std::min(rx,ry));
-  }
+  if(circle){float rad=std::min(rx,ry);rx=rad;ry=rad;}
+  // Preserve the exact user-defined path dimensions and corner radius.
+  // Smoothing is applied to word layout below, not by silently changing geometry.
+  float r=circle?std::min(rx,ry):std::min(x.radius*std::min(width,height),std::min(rx,ry));
   float sw=2*(rx-r),sh=2*(ry-r),arc=1.57079632679f*r;
   float perimeter=circle?6.2831853f*std::sqrt((rx*rx+ry*ry)*.5f):2*sw+2*sh+4*arc;
   float direction=x.reverse?-1.0f:1.0f;
@@ -238,27 +225,63 @@ private:
    if(circle){float a=dist/perimeter*6.2831853f;return {cx+rx*cosf(a),cy+ry*sinf(a),-sinf(a),cosf(a)};}
    return RectPoint(dist,cx,cy,rx,ry,r);
   };
-  for(size_t k=0;k<text.size();++k){
-   // Place the glyph center on the path, not its left edge. The previous
-   // version sampled the path at the center but drew from that point forward,
-   // which made neighboring glyphs crowd and overlap.
-   float d=cursor+glyphWidth[k]*.5f;Point p=pointAt(d);
-   // Use the tangent of the wider font-aware rounded path. This changes the
-   // path curvature itself, so letters rotate gradually instead of merely
-   // averaging a tangent along the same tight arc.
-   float tangentLen=sqrtf(p.tx*p.tx+p.ty*p.ty);
-   float tx=tangentLen>0.0001f?p.tx/tangentLen:1.0f;
-   float ty=tangentLen>0.0001f?p.ty/tangentLen:0.0f;
-   float nx=-ty,ny=tx;
-   // An orthonormal transform rotates the complete glyph without shearing or scaling it.
-   XFORM xf{};
-   xf.eM11=tx;xf.eM12=ty;xf.eM21=nx;xf.eM22=ny;
-   xf.eDx=p.x-tx*glyphWidth[k]*.5f-nx*fs*.5f;
-   xf.eDy=p.y-ty*glyphWidth[k]*.5f-ny*fs*.5f;
-   SetWorldTransform(c.dc,&xf);
-   TextOutW(c.dc,0,0,&text[k],1);
-   cursor+=glyphWidth[k];
-   if(k+1<text.size())cursor+=letterGap;
+  const float smooth=std::max(0.0f,std::min(1.0f,x.cornerSmoothness));
+  size_t k=0;
+  while(k<text.size()){
+   if(text[k]==L' '){
+    cursor+=glyphWidth[k];
+    if(k+1<text.size())cursor+=letterGap;
+    ++k;
+    continue;
+   }
+   // Treat each word as a coherent moving group. Its center follows the path,
+   // while its letters share a common orientation and a straight baseline.
+   // At smoothing=0 every glyph follows the path individually; at smoothing=1
+   // the whole word moves and rotates as one rigid unit.
+   const size_t first=k;
+   float wordWidth=0.0f;
+   while(k<text.size()&&text[k]!=L' '){
+    wordWidth+=glyphWidth[k];
+    if(k+1<text.size()&&text[k+1]!=L' ')wordWidth+=letterGap;
+    ++k;
+   }
+   const float wordCenterDistance=cursor+wordWidth*.5f;
+   Point anchor=pointAt(wordCenterDistance);
+   float anchorLen=sqrtf(anchor.tx*anchor.tx+anchor.ty*anchor.ty);
+   float anchorTx=anchorLen>0.0001f?anchor.tx/anchorLen:1.0f;
+   float anchorTy=anchorLen>0.0001f?anchor.ty/anchorLen:0.0f;
+   float anchorAngle=atan2f(anchorTy,anchorTx);
+   float localOffset=-wordWidth*.5f;
+   for(size_t j=first;j<k;++j){
+    const float gw=glyphWidth[j];
+    const float along=localOffset+gw*.5f;
+    const float d=cursor+along+wordWidth*.5f;
+    Point pathPoint=pointAt(d);
+    float rawLen=sqrtf(pathPoint.tx*pathPoint.tx+pathPoint.ty*pathPoint.ty);
+    float rawTx=rawLen>0.0001f?pathPoint.tx/rawLen:1.0f;
+    float rawTy=rawLen>0.0001f?pathPoint.ty/rawLen:0.0f;
+    float rawAngle=atan2f(rawTy,rawTx);
+    float angleDelta=atan2f(sinf(rawAngle-anchorAngle),cosf(rawAngle-anchorAngle));
+    float angle=anchorAngle+(1.0f-smooth)*angleDelta;
+    float tx=cosf(angle),ty=sinf(angle);
+    // Blend the glyph center from the exact path point toward the word's
+    // straight baseline. This removes the visual "fan" at a corner.
+    float rigidX=anchor.x+anchorTx*along;
+    float rigidY=anchor.y+anchorTy*along;
+    float px=pathPoint.x*(1.0f-smooth)+rigidX*smooth;
+    float py=pathPoint.y*(1.0f-smooth)+rigidY*smooth;
+    float nx=-ty,ny=tx;
+    XFORM xf{};
+    xf.eM11=tx;xf.eM12=ty;xf.eM21=nx;xf.eM22=ny;
+    xf.eDx=px-tx*gw*.5f-nx*fs*.5f;
+    xf.eDy=py-ty*gw*.5f-ny*fs*.5f;
+    SetWorldTransform(c.dc,&xf);
+    TextOutW(c.dc,0,0,&text[j],1);
+    localOffset+=gw;
+    if(j+1<k)localOffset+=letterGap;
+   }
+   cursor+=wordWidth;
+   if(k<text.size())cursor+=letterGap;
   }
   ModifyWorldTransform(c.dc,nullptr,MWT_IDENTITY);SelectObject(c.dc,old);DeleteObject(font);
   for(size_t k=0,n=(size_t)width*height;k<n;++k){unsigned char* p=c.px+k*4;unsigned char a=std::max(p[0],std::max(p[1],p[2]));p[0]=p[1]=p[2]=255;p[3]=a;}
